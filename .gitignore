@@ -1,5 +1,8 @@
+# macOS Finder metadata — never commit
+.DS_Store
+
 # gstack/browse daemon session state (tokens, PIDs, logs) — never commit
 .gstack/
 
-# throwaway mock-preview files (see DASHBOARD-PLAYBOOK.md §6)
+# throwaway mock-preview files (see SKILL.md Phase 5)
 __preview*.html
