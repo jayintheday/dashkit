@@ -1,158 +1,182 @@
 ---
 name: dashkit
-description: "Build a live, single-file dashboard styled like the shadcn/ui dashboard-01 block, delivered as a self-contained Claude Artifact wired to the user's own remote MCP connectors so the numbers are real, not fake. Supports light and dark themes (dark by default). Use when someone asks for a dashboard, admin panel, metrics view, or status page over their connected services (Vercel, Supabase, Stripe, Linear, GitHub, Notion, Postgres, Google Sheets, …)."
+description: "Apply shadcn/ui components to a user's live data to build a polished, single-file dashboard, delivered as a self-contained Claude Artifact wired to their own remote MCP connectors so the numbers are real, not fake. A component kit you COMPOSE to fit the data (stat cards, charts, tables, badges) — not one fixed layout. Light and dark, dark by default. Use when someone asks for a dashboard, admin panel, metrics view, or status page over their connected services (Vercel, Supabase, Stripe, Linear, GitHub, Notion, Postgres, Google Sheets, …)."
 ---
 
 # Dashkit — live shadcn/ui dashboard artifacts
 
 You build a **single self-contained `.html` file** — inline CSS + inline JS, Chart.js from a
-CDN, no build step, no framework — that looks like the shadcn/ui **dashboard-01** block
-(inset sidebar, a row of stat cards, 1–2 charts, a tabbed paginated table) and shows **live
-data pulled from the user's own connected services** at load time.
+CDN, no build step, no framework — that **applies shadcn/ui components to the user's live data**,
+delivered as a Claude Artifact that fetches from the user's own connected services at load time.
 
-The difference from a static shadcn demo is the whole point: **the numbers are real.** Don't
-build a pretty template with placeholder data — build a dashboard for *this* user's actual
-data.
+**This is a component kit, not a template.** It gives you shadcn pieces — stat cards, an
+area/line chart, a horizontal bar chart, a tabbed paginated table, badges, an inset sidebar, a
+header with a theme toggle — as functions you **compose into the layout *this* data calls for.**
+Don't force every dashboard into the same shape: a deploy status page might be stat cards + one
+table and no charts; a revenue view might be an area chart + a charges table; a database view
+might be a row-count bar chart and little else. **Compose what the data needs.**
 
-> **This file is self-sufficient.** The complete, styled skeleton is embedded below under
-> **"Build kit"** — copy that whole block and replace the placeholders. **Do not hand-roll your
-> own CSS from the prose; that's how you get generic AI-slop output instead of the shadcn look.**
-> You cannot use the real shadcn React components in an Artifact (no build step), so this
-> reproduces shadcn's look — its Neutral tokens, `new-york` style, Geist font, dashboard-01
-> layout — in hand-written CSS, with Chart.js standing in for shadcn/Recharts charts.
+The difference from a static shadcn demo is the whole point: **the numbers are real.**
 
-> Optional depth, if present in the folder: `dashboard-template.html` is the same skeleton as a
-> standalone file, and `DASHBOARD-PLAYBOOK.md` is extended reference (data-shape tables, deeper
-> notes). Neither is required — if all you have is this SKILL.md, everything you need is here.
+> **Self-sufficient.** Everything is in this file: the design rules, the procedure, and the full
+> component kit (the "Build kit" below). Optional, if present in the folder:
+> `dashboard-template.html` is the same kit shown composed into one example layout.
 
 ## The one thing that breaks everything if you miss it
 
-The dashboard runs as a **Claude Artifact: a sandboxed iframe**. It does **not** use
-`fetch()`. Data reaches it only through a bridge the runtime injects:
+The dashboard runs as a **Claude Artifact: a sandboxed iframe**. It does **not** use `fetch()`.
+Data reaches it only through a bridge the runtime injects:
 
 ```js
 const r = await window.cowork.callMcpTool(name, args);
 ```
 
-That bridge can only reach **remote MCP connectors** (the URL/OAuth ones in Claude →
-Settings → Connectors). It **cannot** reach a **local/stdio MCP server** — the sandbox can't
-talk to the user's machine. This is the #1 setup-loop trap: the agent wires the dashboard to
-a local Postgres/MCP, the artifact loads, every call silently fails, and the user just sees a
-red "Couldn't load live data" box with no clue why.
+That bridge can only reach **remote MCP connectors** (the URL/OAuth ones in Claude → Settings →
+Connectors). It **cannot** reach a **local/stdio MCP server** — the sandbox can't talk to the
+user's machine. This is the #1 setup-loop trap: the agent wires the dashboard to a local
+Postgres/MCP, the artifact loads, every call silently fails, and the user sees a red "Couldn't
+load live data" box with no clue why.
 
-**So check connectivity before building.** If the user's data lives only in a local MCP,
-**stop and tell them to add a remote connector first** — don't build a dashboard that can't
-reach its data. (If the bridge fails even with a remote connector wired, confirm the runtime's
-bridge global is still `window.cowork.callMcpTool` — APIs drift.)
+**So check connectivity before building.** If the user's data lives only in a local MCP, **stop
+and tell them to add a remote connector first.** (If the bridge fails even with a remote
+connector wired, confirm the runtime's bridge global is still `window.cowork.callMcpTool`.)
+
+## Design rules — these make it shadcn, in *any* layout
+
+However you compose the components, keep these. They're what separate a real shadcn dashboard
+from AI slop, and they hold regardless of arrangement:
+
+- **Tokens drive every color.** Light tokens on `:root`, dark under `.dark`, each with its own
+  `color-scheme`. **Never hardcode a color** in CSS or JS — pull it from a CSS variable.
+- **Light + dark, dark by default, with a working header toggle.** The `#themeToggle` is a
+  required control; if you restyle the header, it stays.
+- **Theme-aware charts.** Chart.js reads its colors from the tokens at draw time (`cssVar()` /
+  `hexToRgba()`), and the charts redraw on theme switch. No hardcoded chart colors.
+- **Geist, best-effort.** Loaded from jsdelivr; if the sandbox CSP blocks it, the system
+  fallback is fine — the tokens + layout carry the look. Don't swap in a different font.
+- **No fake elements.** Every visible control works or is removed. Wire real external links
+  where you have IDs; delete decorative chrome (Quick Create, Inbox, Search, "Customize
+  Columns", drag-handles, dead ⋯ menus, `href="#"` logos). Never delete the *live* controls the
+  kit ships (theme toggle, tabs, pagination, sidebar nav, range toggle).
+- **Hygiene.** HTML-escape every live value (`esc()`); add `rel="noopener"` to every
+  `target="_blank"`.
+- **Single file**; the only external deps are the Chart.js and Geist CDN tags.
 
 ## Procedure — five phases, in order. Do not skip to Build.
 
-The first three phases are what prevent the "dashboard that can't reach its data" loop.
-
 ### Phase 1 — Discover the connections
-Look at the MCP tools **you (the agent) can call in this conversation** — those *are* the
-remote connectors, and their `mcp__<server-uuid>__<operation>` names are exactly what the
-artifact will call. Copy them verbatim; the server UUIDs are per-user/session, never guessed.
-If the only data source is a local MCP, stop (see above).
+Look at the MCP tools **you (the agent) can call in this conversation** — those *are* the remote
+connectors, and their `mcp__<server-uuid>__<operation>` names are exactly what the artifact will
+call. Copy them verbatim; never guess UUIDs. If the only source is local, stop (see above).
 
 ### Phase 2 — Review what data they actually have
-For each connected source, find what it exposes: call its `list_*` / read operations, or ask
-the user for the IDs you're missing (a Vercel `projectId`, a Supabase `project_ref`) — never
-invent them. Make **one cheap probe call per source** to confirm it returns data. Note the
-real metrics available: counts, revenue, statuses, time series, rows. A source that errors on
-probe is one you design *around*, not into.
+For each source, find what it exposes: call its `list_*` / read operations, or ask the user for
+IDs you're missing (a Vercel `projectId`, a Supabase `project_ref`) — never invent them. Make
+**one cheap probe call per source** to confirm it returns data. Note the real metrics: counts,
+revenue, statuses, time series, rows. (Common shapes are tabled under "Data shapes" below.)
 
-### Phase 3 — Propose a smart layout, then confirm
-Don't build a generic dashboard — design one for *this* project from the data you found:
-- the handful of most decision-useful metrics → top **stat cards**
-- 1–2 **charts** that fit the data you actually have (time series → area/line; categorical →
-  bars; skip a chart if nothing suits it)
-- what belongs in the **data table** tabs
+### Phase 3 — Design the layout for *this* data, then confirm
+**This is where composition happens.** From what you found, decide which components fit and how
+to arrange them — don't reach for a fixed template:
+- decision-useful single numbers → **stat cards** (as many or few as warranted)
+- a time series → an **area/line chart**; a categorical breakdown → a **bar chart**; *no chart
+  if nothing suits it*
+- rows worth browsing → a **tabbed table**; skip it if there's nothing tabular
 
-Briefly propose this (which metrics, which charts, which tabs) and adjust to the user's
-priorities **before** building.
+Sketch the shape (which components, what arrangement) and run it past the user before building.
+Examples of legitimately different shapes:
+- **Status page:** 4 stat cards + a deployments table. No charts.
+- **Revenue view:** revenue/MRR stat cards + an area chart over time + a charges/plans table.
+- **Database view:** a row-count bar chart + a tables list. One or two stat cards.
 
-### Phase 4 — Build the single file
-**Start from the Build kit below — copy the whole skeleton, then make these edits.** It already
-ships the shadcn tokens, the light/dark theme + toggle, the `call()` helper, and theme-aware
-charts. Your job is to swap placeholders for real data, not to restyle.
+### Phase 4 — Build by composing the kit
+Copy the **Foundation** (the whole `<style>` + the foundation `<script>` from the Build kit) — it
+carries the tokens, every component's styles, and the component functions. Then **write the
+`load()` composition** for this project:
 
-- **Wire the data.** Replace the `SOURCE_*` / `*_ID` consts (top of the script) with the real
-  tool names + IDs from Phase 1. In `load()`, replace `const data = SAMPLE` with values derived
-  from `await call(TOOL, args)`. Run independent calls with `Promise.all`. Wrap each **optional**
-  source in its own `try/catch` so one dead integration degrades gracefully (e.g. "Pre-revenue")
-  instead of blanking the page. Convert money from cents. **Delete the whole `SAMPLE` block.**
-- **Make it this project's dashboard.** Rename the stat cards, chart titles, and table columns to
-  the metrics that matter. Delete any card/chart/tab you have no real data for.
-- **Theme:** leave the token blocks alone — shadcn **Neutral**, `new-york`, radius 10px, light on
-  `:root` + dark under `.dark`, dark by default. **Every color comes from a CSS variable; never
-  hardcode one** (that's what breaks theming). Charts read tokens at draw time via the
-  `cssVar()`/`hexToRgba()` helpers, so they follow the theme automatically — keep that pattern.
-- **Keep the light/dark toggle — it's a required feature, not decoration.** The kit puts a working
-  sun/moon button (`#themeToggle`) in the header that flips the `.dark` class, persists the choice
-  to `localStorage`, and redraws the charts. **If you restyle or rebuild the header, the toggle must
-  stay** — it's easy to drop it while adding a title/date/refresh and end up with dark-only and no
-  switcher. The same goes for the other real controls the kit ships (sidebar nav scroll-to, tab
-  switching, pagination, the chart range toggle, the row-select count): keep them working. The
-  "no fake elements" rule below deletes *dead* chrome, never live controls like these.
-- **Font (best-effort, don't block on it):** the kit loads **Geist** from jsdelivr (same CDN as
-  Chart.js). The Artifact CSP may still block fonts; if so the system fallback applies and that's
-  fine — the tokens + layout carry the look. Don't treat a missing webfont as a failure, and don't
-  swap in a different font.
-- **No fake elements** — the biggest AI-slop tell. If it looks clickable, it works, or it's gone.
-  Wire real external links where you have the IDs (Vercel team, Supabase project, Stripe dashboard,
-  commit → deployment URL); **delete** decorative chrome (Quick Create, Inbox, Settings, Search,
-  "Customize Columns", "Add Section", drag-handles, dead ⋯ menus, `href="#"` logos). The kit's
-  Resources block is commented out for this reason — uncomment and wire it only with real links.
-- **Hygiene:** the kit already HTML-escapes live values (`esc()`); keep using it, and add
-  `rel="noopener"` to every `target="_blank"`.
+- **Wire the data.** Replace `SOURCE_*` / `*_ID` with the Phase-1 tool names + IDs. In `load()`,
+  replace `SAMPLE` with values from `await call(TOOL, args)`. `Promise.all` for independent
+  calls; wrap each **optional** source in its own `try/catch` so one dead source degrades (e.g.
+  "Pre-revenue") instead of blanking the page. Convert money from cents. **Delete `SAMPLE`.**
+- **Compose the components the data needs**, in the arrangement you proposed — call `scard(…)`,
+  `areaChart(…)`, `barChart(…)`, `mountTable(…)`. Add/remove/rearrange freely; you don't have to
+  use all of them, and you can lay them out differently from the example.
+- **Apply the Design rules above.** Don't restyle the components themselves (that's what keeps
+  fidelity) — compose them.
 
 ### Phase 5 — Verify
-- **Inside the Claude artifact runtime** (normal case): `window.cowork` is live, so the
-  **live preview *is* the test** — load it and confirm real data populates, both themes look
-  right (toggle and watch the charts re-read their colors), and nothing interactive is dead. If
-  data doesn't load, re-check Phase 1 (remote vs local connector) first.
-- **In a coding agent on disk** (`window.cowork` doesn't exist): the kit renders from its own
-  `SAMPLE` block so you can screenshot it directly; for a wired build, mock `window.cowork`
-  (see `DASHBOARD-PLAYBOOK.md` §6 if present). Delete any throwaway preview file after.
+- **In the Claude artifact runtime** (normal): `window.cowork` is live, so the preview *is* the
+  test — confirm real data populates, both themes look right (toggle and watch the charts
+  re-theme), nothing interactive is dead. If data doesn't load, re-check Phase 1.
+- **In a coding agent on disk** (`window.cowork` absent): the kit renders from its `SAMPLE` block,
+  so screenshot it directly. For a *wired* build, mock the bridge to preview headlessly:
+  `cp dashboard.html __preview.html`, inject a `<script>` after `<title>` defining
+  `window.cowork.callMcpTool` to return representative `{structuredContent: …}` data keyed by tool
+  name (use real `Date.now()` so time-bucketed charts fill), screenshot in both themes, then
+  `rm __preview.html`.
 
-## Pre-ship checklist
-- [ ] Data source is a **remote** MCP connector (not local/stdio).
-- [ ] Tool-name consts came from the agent's own connected tools; IDs confirmed via a probe.
-- [ ] Layout chosen from data that actually exists and run past the user — not a template.
-- [ ] Single file; only external deps are the Chart.js + Geist CDN tags.
-- [ ] All colors from CSS tokens; light on `:root`, dark under `.dark`, each with `color-scheme`.
-- [ ] A **visible light/dark toggle is present in the header** and works (survived any header
-  restyle); **charts re-read their colors on switch** (no hardcoded JS colors).
-- [ ] Charts, tooltips, gridlines, axis ticks all legible in **both** light and dark.
-- [ ] Every interactive-looking element does something real, or is gone.
-- [ ] External links correct, new tab, `rel="noopener"`.
-- [ ] Live values HTML-escaped; amounts converted from cents.
-- [ ] Optional integrations fail gracefully (no whole-page blank on one dead source).
-- [ ] Empty-state `colspan` matches the final column count (the kit computes it from the headers).
-- [ ] All `SAMPLE`/placeholder data and `SOURCE_*`/`REPLACE_ME` consts removed; real values in.
-- [ ] Real IDs/email reviewed before any sharing.
+## Build kit
 
-## Build kit — copy this whole file, then do Phase 4
+The kit is **two parts**:
+1. **Foundation** — the `<style>` and the foundation `<script>`. Copy it whole. It holds the
+   shadcn tokens, every component's CSS, and the component functions + engine.
+2. **Composition** — the body of `load()`. **This is yours to write** for the data. The embedded
+   file shows one composition (stat cards + two charts + a tabbed table); recompose it.
 
-This is a complete, self-contained scaffold: light/dark shadcn dashboard-01 with a theme toggle,
-the `call()` MCP normalizer, and theme-aware Chart.js. It renders out of the box on `SAMPLE` data
-so you can see it; replace the placeholders to make it live. **Copy it verbatim — don't
-reconstruct the CSS by hand.**
+### The components (call these from `load()`)
+
+| Component | Call | Use when |
+|---|---|---|
+| Stat card | `scard({desc, value, badge?, foot?, footIcon?, sub?})` → HTML string | A single decision-useful number. Wrap several in `<div class="section-cards">…</div>`. |
+| Area/line chart | `areaChart(canvasId, series, days)` — `series:[{t:ms, primary, secondary?}]` | A time series. Omit `secondary` for a single series. |
+| Bar chart | `barChart(canvasId, [{label, value}])` | A categorical breakdown / ranking. |
+| Data table | `mountTable(el, {tabs:[{id, label, headers, rows:[{cells:[html]}]}], pageSize?})` | Rows worth browsing; multiple `tabs` for related sets. Pagination + row-select built in. |
+| Badge | `badge("outline"\|"muted", iconHTML\|"", text)` | Inline status/label pills. |
+| Status pill | `statusBadge(state, {READY:"Ready", …})` | Maps a state string to a colored ✓ / ✕ / spinner pill. |
+| Shell | sidebar + header markup in the body | Rename nav items; add a Resources group of real external links. Keep the theme toggle. |
+
+### Compose for your data — alternative shapes
+
+The example `load()` is dashboard-01. Other shapes are just different compositions of the same
+functions, e.g.:
+
+```js
+// Status page — stat cards + one table, no charts
+app.innerHTML = `<div class="section-cards">${cards.join("")}</div>
+  <div class="block"><div id="tbl"></div></div>`;
+mountTable(document.getElementById("tbl"), {tabs:[{id:"deploys", label:"Deployments", headers:[...], rows:[...]}]});
+```
+```js
+// Metrics wall — a full-width trend + a breakdown row, no table
+app.innerHTML = `<div class="block"><div class="card chart-card">
+    <div class="chart-head"><div><div class="ct">Signups</div></div></div>
+    <div class="chart-content"><div class="chart-box"><canvas id="trend"></canvas></div></div></div></div>
+  <div class="block"><div class="card chart-card">
+    <div class="chart-content"><div class="chart-box"><canvas id="byPlan"></canvas></div></div></div></div>`;
+areaChart("trend", signups, 90); barChart("byPlan", plans);
+```
+
+### Foundation + example composition (copy this whole file, then rewrite `load()`)
 
 ```html
 <!DOCTYPE html>
 <!--
-  dashkit — clean shadcn/ui dashboard-01 scaffold (light + dark).
-  This is a STARTING POINT, not a finished dashboard. See SKILL.md for the procedure.
+  dashkit — shadcn/ui component kit for live dashboards (light + dark).
+  This is NOT "the" layout. It's a kit of shadcn components you COMPOSE to fit your data:
+  stat cards, an area/line chart, a horizontal bar chart, a tabbed paginated table, badges,
+  an inset sidebar, a header with a theme toggle.
 
-  To turn it into a live dashboard:
-    1. Replace the SOURCE_* / *_ID consts below with the real MCP tool names + IDs you
-       discovered (SKILL.md Phase 1). They look like  mcp__<server-uuid>__<operation>.
-    2. Replace the SAMPLE_* assignments in load() with real `await call(TOOL, args)` results
-       (the call() helper is already here). SAMPLE_* is preview-only filler — delete it.
-    3. Rename the stat cards / chart titles / table columns to the metrics that matter for
-       THIS project. Delete cards/charts/tabs you have no real data for — never ship filler.
+  Two parts:
+    • FOUNDATION (the <style> + the foundation <script>) — copy it whole. It carries the
+      shadcn tokens, every component's styles, and the component functions (scard, areaChart,
+      barChart, mountTable, badge, statusBadge) + the engine (call(), theme toggle).
+    • COMPOSITION (the body of load()) — this is YOURS. The example below composes a
+      dashboard-01-style layout; rebuild it for your data: render only the components that fit,
+      in any arrangement. A status page might be all stat cards + one table and no charts; a
+      metrics view might be three charts and no table. Compose what the data calls for.
+
+  To make it live: replace SOURCE_*/*_ID with your real MCP tool names + IDs, and replace the
+  SAMPLE data with `await call(TOOL, args)` results. Delete SAMPLE before shipping.
   Theme: shadcn Neutral, new-york, radius 10px. Dark by default; toggle in the header.
 -->
 <html lang="en">
@@ -225,7 +249,7 @@ a{color:inherit;text-decoration:none}
 
 .wrapper{display:flex;min-height:100vh;background:var(--sidebar)}
 
-/* ===== Sidebar (inset) ===== */
+/* ===== Component: inset sidebar ===== */
 .sidebar{width:256px;flex:none;background:var(--sidebar);color:var(--sidebar-foreground);
   display:flex;flex-direction:column;gap:8px;padding:8px;position:sticky;top:0;height:100vh}
 .smenu-btn{display:flex;align-items:center;gap:8px;height:32px;padding:0 8px;border-radius:var(--radius-md);
@@ -249,7 +273,7 @@ a{color:inherit;text-decoration:none}
 .user-btn .ut b{font-size:13px;font-weight:500;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .user-btn .ut span{font-size:11.5px;color:var(--muted-foreground);display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-/* ===== Inset main ===== */
+/* ===== Inset main + header ===== */
 .inset{flex:1;min-width:0;background:var(--background);margin:8px;margin-left:0;border-radius:14px;
   box-shadow:var(--shadow-sm);display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--border)}
 .site-header{height:var(--header-height);flex:none;display:flex;align-items:center;gap:8px;
@@ -263,16 +287,19 @@ a{color:inherit;text-decoration:none}
 
 .scroll{flex:1;overflow-y:auto}
 .main-col{display:flex;flex-direction:column;gap:24px;padding:24px 0}
+.block{padding:0 24px}
 
-/* ===== Badge ===== */
+/* ===== Component: badge ===== */
 .badge{display:inline-flex;align-items:center;justify-content:center;gap:4px;width:fit-content;
   font-size:12px;font-weight:500;line-height:16px;border:1px solid transparent;border-radius:999px;
   padding:2px 8px;white-space:nowrap}
 .badge svg{width:12px;height:12px}
 .badge.outline{border-color:var(--border);color:var(--foreground)}
 .badge.muted{border-color:var(--border);color:var(--muted-foreground);padding:2px 6px}
+.statusb svg{width:13px;height:13px}
+.statusb .ok{color:var(--green)}.statusb .ld{color:var(--muted-foreground)}.statusb .er{color:var(--destructive)}
 
-/* ===== Section cards ===== */
+/* ===== Component: stat card ===== */
 .section-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;padding:0 24px}
 @media(max-width:1200px){.section-cards{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:600px){.section-cards{grid-template-columns:1fr}}
@@ -288,8 +315,7 @@ a{color:inherit;text-decoration:none}
 .scard .ft .l1 svg{width:16px;height:16px}
 .scard .ft .l2{color:var(--muted-foreground)}
 
-/* ===== Chart card ===== */
-.block{padding:0 24px}
+/* ===== Component: chart card ===== */
 .chart-card{display:flex;flex-direction:column;gap:24px;padding:24px 0}
 .chart-head{display:grid;grid-template-columns:1fr auto;align-items:start;gap:8px;padding:0 24px}
 .chart-head .ct{font-size:15px;font-weight:600;line-height:1}
@@ -306,7 +332,7 @@ a{color:inherit;text-decoration:none}
 .tgroup button.active{background:var(--accent)}
 @media(max-width:720px){.tgroup button{padding:0 10px}}
 
-/* ===== Tabs (data table) ===== */
+/* ===== Component: data table (tabs + pagination) ===== */
 .dt{display:flex;flex-direction:column;gap:24px}
 .dt-top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 24px;flex-wrap:wrap}
 .tabslist{display:inline-flex;align-items:center;background:var(--muted);border-radius:var(--radius-lg);padding:3px;height:36px}
@@ -316,7 +342,6 @@ a{color:inherit;text-decoration:none}
 .tabslist button.active{background:var(--background);color:var(--foreground);box-shadow:var(--shadow-sm)}
 .tabslist .b{font-size:11px;background:rgba(115,115,115,.3);border-radius:999px;height:20px;min-width:20px;
   display:inline-flex;align-items:center;justify-content:center;padding:0 4px}
-
 .tbl-wrap{margin:0 24px;border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden}
 table{width:100%;border-collapse:collapse;font-size:13.5px}
 thead{background:var(--muted)}
@@ -327,9 +352,6 @@ tbody tr:hover td{background:var(--row-hover)}
 th.mid,td.mid{width:32px;text-align:center;padding:0}
 input[type=checkbox]{width:16px;height:16px;accent-color:var(--primary);margin:0;vertical-align:middle;cursor:pointer}
 .mut{color:var(--muted-foreground)}
-.statusb svg{width:13px;height:13px}
-.statusb .ok{color:var(--green)}.statusb .ld{color:var(--muted-foreground)}.statusb .er{color:var(--destructive)}
-
 .dt-foot{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:0 24px 4px;flex-wrap:wrap}
 .dt-foot .sel{font-size:13.5px;color:var(--muted-foreground);flex:1}
 .dt-foot .grp{display:flex;align-items:center;gap:32px}
@@ -355,7 +377,7 @@ select.sel-sm{height:32px;border:1px solid var(--border);border-radius:var(--rad
 </head>
 <body>
 <div class="wrapper">
-  <!-- ===== Sidebar ===== -->
+  <!-- ===== App shell: sidebar ===== (rename items / add a Resources group of real external links) -->
   <aside class="sidebar">
     <div class="sb-head">
       <a class="smenu-btn"><span class="mark">D</span><span class="ttl">Dashboard</span></a>
@@ -363,17 +385,13 @@ select.sel-sm{height:32px;border:1px solid var(--border);border-radius:var(--rad
     <div class="sb-content">
       <div class="sb-group">
         <a class="smenu-btn active" data-go="top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>Overview</a>
-        <a class="smenu-btn" data-go="chart"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>Analytics</a>
-        <a class="smenu-btn" data-go="table"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>Records</a>
       </div>
       <!--
-        "Resources" links are external <a target="_blank"> to the real dashboards behind your
-        data sources. Build the URLs from IDs you already have, and DELETE this whole group if
-        you have no real links — do not ship href="#" placeholders.
-        <div class="sb-group">
-          <div class="sb-label">Resources</div>
-          <a class="smenu-btn" href="https://example.com/console" target="_blank" rel="noopener">…</a>
-        </div>
+        Optional "Resources" group: external <a target="_blank" rel="noopener"> to the real
+        dashboards behind your sources. Build URLs from IDs you have; DELETE if you have none —
+        never ship href="#" placeholders.
+        <div class="sb-group"><div class="sb-label">Resources</div>
+          <a class="smenu-btn" href="https://example.com/console" target="_blank" rel="noopener">…</a></div>
       -->
     </div>
     <div class="sb-foot">
@@ -384,7 +402,7 @@ select.sel-sm{height:32px;border:1px solid var(--border);border-radius:var(--rad
     </div>
   </aside>
 
-  <!-- ===== Inset ===== -->
+  <!-- ===== App shell: inset + header (keep the theme toggle) ===== -->
   <div class="inset">
     <header class="site-header">
       <button class="ghost-icon" id="sbToggle" title="Toggle Sidebar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg></button>
@@ -396,50 +414,23 @@ select.sel-sm{height:32px;border:1px solid var(--border);border-radius:var(--rad
       </div>
     </header>
     <div class="scroll" id="top">
-      <div class="main-col" id="app">
-        <div class="loading">Loading…</div>
-      </div>
+      <div class="main-col" id="app"><div class="loading">Loading…</div></div>
     </div>
   </div>
 </div>
 
 <script>
-/* ═══════════════ 1. WIRE YOUR DATA SOURCES (SKILL.md Phase 1) ═══════════════
-   These are placeholders. Replace with the real MCP tool names + IDs from your own
-   connected remote connectors. The artifact reaches REMOTE connectors only. */
-const SOURCE_A = "mcp__SERVER_UUID__list_items";   // ← replace; e.g. mcp__<uuid>__list_deployments
-const SOURCE_B = "mcp__SERVER_UUID__get_metrics";  // ← replace; delete if you only have one source
-const PROJECT_ID = "REPLACE_ME";                   // ← replace, or delete if the tool needs no IDs
+/* ╔══════════════════════════════════════════════════════════════════════════════╗
+   ║ FOUNDATION — copy this whole block. shadcn tokens (above) + component kit +     ║
+   ║ engine. The components are functions you call from load() to compose a layout. ║
+   ╚══════════════════════════════════════════════════════════════════════════════╝ */
 
-/* ═══════════════ 2. PREVIEW-ONLY SAMPLE DATA — DELETE WHEN WIRED ═══════════════
-   Lets the scaffold render before it's connected. In a real build, remove this and
-   populate from `await call(...)` in load(). Never ship a dashboard on sample data. */
-const SAMPLE = {
-  stats:{ revenue: 48250.00, users: 1284, records: 342, success: 98 },
-  // time series for the area chart (last 90 days, two stacked series)
-  series:(function(){const a=[];const now=Date.now();for(let i=89;i>=0;i--){const t=now-i*864e5;
-    a.push({t, primary: Math.round(6+8*Math.random()+ (i<30?6:0)), secondary: Math.round(2+4*Math.random())});}return a;})(),
-  breakdown:[ {label:"Organic",value:540},{label:"Referral",value:312},{label:"Direct",value:268},{label:"Email",value:164} ],
-  records:[
-    {name:"Initial import",status:"READY",owner:"Ada",when:Date.now()-2*864e5},
-    {name:"Schema migration",status:"READY",owner:"Lin",when:Date.now()-5*864e5},
-    {name:"Backfill job",status:"RUNNING",owner:"Sam",when:Date.now()-6*864e5},
-    {name:"Failed export",status:"ERROR",owner:"Ada",when:Date.now()-9*864e5}
-  ],
-  items:[
-    {label:"Workspaces",count:128,note:"public"},
-    {label:"Members",count:1284,note:"public"},
-    {label:"Projects",count:342,note:"public"},
-    {label:"Integrations",count:17,note:"public"}
-  ]
-};
-
-/* ═══════════════ helpers (keep all of these) ═══════════════ */
+/* helpers */
 const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 function hexToRgba(hex,a){hex=(hex||"").replace("#","");if(hex.length===3)hex=hex.split("").map(c=>c+c).join("");
   const n=parseInt(hex||"000000",16);return "rgba("+((n>>16)&255)+","+((n>>8)&255)+","+(n&255)+","+a+")";}
 const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
-const money = v => "$"+v.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const money = (v,cur) => (cur||"$")+Number(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 const num = v => v==null?"—":Number(v).toLocaleString();
 const fmtDate = ms => new Date(ms).toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"});
 const dayKey = ms => {const d=new Date(ms);d.setHours(0,0,0,0);return d.getTime();};
@@ -460,7 +451,7 @@ const SVG={
   moon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>'
 };
 
-/* ═══════════════ MCP fetch normalizer (handles both result shapes) ═══════════════ */
+/* MCP fetch normalizer (handles both result shapes) */
 async function call(name,args){
   const r=await window.cowork.callMcpTool(name,args);
   if(r&&r.isError) throw new Error("Tool error: "+name);
@@ -469,201 +460,215 @@ async function call(name,args){
   return d;
 }
 
-let chartArea=null, chartBars=null, STATE={}, page=0, pageSize=10, curTab="records", curRange=90;
+/* ── Component: badge ──  badge("outline"|"muted", iconHTML|"", text) → string */
+const badge=(cls,icon,txt)=>'<span class="badge '+cls+'">'+(icon||"")+esc(txt)+'</span>';
+/* status pill from a state string */
+function statusBadge(state,labels){
+  const L=labels||{}; const up=String(state).toUpperCase();
+  if(/READY|SUCC|OK|DONE|ACTIVE/.test(up))return '<span class="badge muted statusb"><span class="ok">'+SVG.check+'</span>'+esc(L[state]||state)+'</span>';
+  if(/ERROR|FAIL|DOWN/.test(up))return '<span class="badge muted statusb"><span class="er">'+SVG.x+'</span>'+esc(L[state]||state)+'</span>';
+  return '<span class="badge muted statusb"><span class="ld">'+SVG.loader+'</span>'+esc(L[state]||state)+'</span>';
+}
 
-function scard(desc,title,bdg,l1,l1i,l2){
+/* ── Component: stat card ──  scard({desc,value,badge?,foot?,footIcon?,sub?}) → string
+   Wrap N of them in <div class="section-cards"> … </div> (the grid auto-flows 4/2/1). */
+function scard(o){
   return `<div class="card scard">
-    <div class="hd"><div class="desc">${desc}</div><div class="title">${title}</div><div class="act">${bdg}</div></div>
-    <div class="ft"><div class="l1">${l1}${l1i||""}</div><div class="l2">${l2}</div></div>
+    <div class="hd"><div class="desc">${esc(o.desc)}</div><div class="title">${o.value}</div><div class="act">${o.badge||""}</div></div>
+    <div class="ft"><div class="l1">${o.foot||""}${o.footIcon||""}</div><div class="l2">${esc(o.sub||"")}</div></div>
   </div>`;
 }
-const badge=(cls,icon,txt)=>'<span class="badge '+cls+'">'+(icon||"")+esc(txt)+'</span>';
 
-async function load(){
-  if(chartArea){try{chartArea.destroy()}catch(e){}chartArea=null;}
-  if(chartBars){try{chartBars.destroy()}catch(e){}chartBars=null;}
-  const app=document.getElementById("app");
-  try{
-    /* ─── In a real build, replace this block with live calls, e.g.:
-         const raw = await call(SOURCE_A, {projectId: PROJECT_ID});
-         …and derive `data` from raw. Wrap each OPTIONAL source in its own try/catch.
-       For the scaffold we use SAMPLE so it renders before it's wired. ─── */
-    const live = (typeof window!=="undefined") && window.cowork && window.cowork.callMcpTool;
-    const data = SAMPLE; // ← replace with values derived from call() results
-
-    STATE = {
-      records: data.records,
-      items: data.items.slice().sort((a,b)=>b.count-a.count)
-    };
-
-    document.getElementById("hdrStatus").outerHTML =
-      badge("outline", live?SVG.check:"", (live?"Live":"Sample data")) ; // honest about source
-
-    app.innerHTML=`
-      <div class="section-cards">
-        ${scard("Revenue", money(data.stats.revenue), badge("outline",SVG.up,"+12%"), "Up from last period", SVG.up, "Sum of paid orders")}
-        ${scard("Active Users", num(data.stats.users), badge("outline",SVG.up,"+4%"), "Steady growth", SVG.up, "Distinct users this period")}
-        ${scard("Records", num(data.stats.records), badge("outline","","Live"), "Total tracked", "", "Across all tables")}
-        ${scard("Success Rate", data.stats.success+"%", badge("outline",SVG.up,"Healthy"), "All systems green", SVG.up, "Recent jobs succeeded")}
-      </div>
-
-      <div class="block" id="chart">
-        <div class="chart-grid">
-          <div class="card chart-card">
-            <div class="chart-head">
-              <div><div class="ct">Activity</div><div class="cs">Two series over the selected period</div></div>
-              <div class="tgroup" id="rangeToggle">
-                <button data-r="90" class="active">3 months</button>
-                <button data-r="30">30 days</button>
-                <button data-r="7">7 days</button>
-              </div>
-            </div>
-            <div class="chart-content"><div class="chart-box"><canvas id="area"></canvas></div></div>
-          </div>
-          <div class="card chart-card">
-            <div class="chart-head"><div><div class="ct">Breakdown</div><div class="cs">By category</div></div></div>
-            <div class="chart-content"><div class="chart-box"><canvas id="bars"></canvas></div></div>
-          </div>
-        </div>
-      </div>
-
-      <div class="dt" id="table">
-        <div class="dt-top">
-          <div class="tabslist" id="tabs">
-            <button data-tab="records" class="active">Records <span class="b">${STATE.records.length}</span></button>
-            <button data-tab="items">Items <span class="b">${STATE.items.length}</span></button>
-          </div>
-        </div>
-        <div class="tbl-wrap" id="tblWrap"></div>
-        <div class="dt-foot">
-          <div class="sel" id="selInfo"></div>
-          <div class="grp">
-            <div class="rpp">Rows per page <select class="sel-sm" id="rpp"><option>10</option><option>20</option><option>50</option></select></div>
-            <div class="pageinfo" id="pageInfo"></div>
-            <div class="pager">
-              <button class="pgbtn" id="pgFirst">${SVG.csl}</button>
-              <button class="pgbtn" id="pgPrev">${SVG.cl}</button>
-              <button class="pgbtn" id="pgNext">${SVG.cr}</button>
-              <button class="pgbtn" id="pgLast">${SVG.csr}</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="footnote">Sources: describe the real connectors here. Replace SAMPLE data before shipping.</div>
-    `;
-
-    drawArea(data.series, curRange);
-    drawBars(data.breakdown);
-
-    document.querySelectorAll("#rangeToggle button").forEach(b=>b.addEventListener("click",()=>{
-      document.querySelectorAll("#rangeToggle button").forEach(x=>x.classList.remove("active"));b.classList.add("active");
-      curRange=+b.dataset.r; drawArea(data.series, curRange);}));
-
-    /* table */
-    const HEADERS={records:["Name","Status","Owner","Updated"],items:["Item","Count","Schema"]};
-    function statusBadge(s){
-      if(s==="READY")return '<span class="badge muted statusb"><span class="ok">'+SVG.check+'</span>Ready</span>';
-      if(s==="ERROR")return '<span class="badge muted statusb"><span class="er">'+SVG.x+'</span>Failed</span>';
-      return '<span class="badge muted statusb"><span class="ld">'+SVG.loader+'</span>'+esc(s)+'</span>';
-    }
-    function rowsFor(tab){
-      if(tab==="records")return STATE.records.map(r=>({cells:[
-        '<span>'+esc(r.name)+'</span>', statusBadge(r.status), esc(r.owner), '<span class="mut">'+fmtDate(r.when)+'</span>'
-      ]}));
-      return STATE.items.map(it=>({cells:[
-        '<span>'+esc(it.label)+'</span>',
-        '<span style="font-variant-numeric:tabular-nums">'+num(it.count)+'</span>',
-        '<span class="mut">'+esc(it.note)+'</span>'
-      ]}));
-    }
-    function renderTable(){
-      const rows=rowsFor(curTab), total=rows.length;
-      const cols=HEADERS[curTab].length+1; // +1 for the checkbox column
-      const pages=Math.max(1,Math.ceil(total/pageSize));
-      if(page>=pages)page=pages-1;if(page<0)page=0;
-      const slice=rows.slice(page*pageSize,page*pageSize+pageSize);
-      const head='<tr><th class="mid"><input type="checkbox" id="all"></th>'+HEADERS[curTab].map(h=>'<th>'+h+'</th>').join('')+'</tr>';
-      const body=slice.map(r=>'<tr><td class="mid"><input type="checkbox" class="rc"></td>'+r.cells.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('');
-      document.getElementById("tblWrap").innerHTML='<table><thead>'+head+'</thead><tbody>'+(body||'<tr><td colspan="'+cols+'" style="text-align:center;padding:36px" class="mut">No results.</td></tr>')+'</tbody></table>';
-      document.getElementById("pageInfo").textContent="Page "+(page+1)+" of "+pages;
-      const upd=()=>{const sel=document.querySelectorAll("#tblWrap .rc:checked").length;document.getElementById("selInfo").textContent=sel+" of "+total+" row(s) selected.";};
-      upd();
-      const all=document.getElementById("all");
-      if(all)all.addEventListener("change",()=>{document.querySelectorAll("#tblWrap .rc").forEach(c=>c.checked=all.checked);upd();});
-      document.querySelectorAll("#tblWrap .rc").forEach(c=>c.addEventListener("change",upd));
-      document.getElementById("pgFirst").disabled=page===0;document.getElementById("pgPrev").disabled=page===0;
-      document.getElementById("pgNext").disabled=page>=pages-1;document.getElementById("pgLast").disabled=page>=pages-1;
-    }
-    function setTab(t){curTab=t;page=0;document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("active",b.dataset.tab===t));renderTable();}
-    document.querySelectorAll("#tabs button").forEach(b=>b.addEventListener("click",()=>setTab(b.dataset.tab)));
-    document.getElementById("rpp").addEventListener("change",e=>{pageSize=+e.target.value;page=0;renderTable();});
-    document.getElementById("pgFirst").addEventListener("click",()=>{page=0;renderTable();});
-    document.getElementById("pgPrev").addEventListener("click",()=>{page--;renderTable();});
-    document.getElementById("pgNext").addEventListener("click",()=>{page++;renderTable();});
-    document.getElementById("pgLast").addEventListener("click",()=>{page=1e9;renderTable();});
-    setTab("records");
-
-    /* sidebar nav (scroll-to) */
-    document.querySelectorAll(".smenu-btn[data-go]").forEach(el=>el.addEventListener("click",()=>{
-      document.querySelectorAll(".smenu-btn").forEach(x=>x.classList.remove("active"));el.classList.add("active");
-      const t=document.getElementById(el.dataset.go);if(t)t.scrollIntoView({behavior:"smooth",block:"start"});}));
-    document.getElementById("sbToggle").addEventListener("click",()=>{const s=document.querySelector(".sidebar");s.style.display=s.style.display==="none"?"":"none";});
-
-  }catch(e){
-    app.innerHTML='<div class="errbox">Couldn\'t load live data: '+esc(e.message||String(e))+'. Try Reload.</div>';
-  }
-}
-
-/* ═══════════════ charts read all colors from CSS vars → theme-agnostic ═══════════════ */
-function drawArea(series, days){
-  if(chartArea){try{chartArea.destroy()}catch(e){}}
-  const since=Date.now()-days*864e5, byWeek=days>30;
-  const within=series.filter(d=>d.t>=since);
-  const map={};within.forEach(d=>{const k=byWeek?weekKey(d.t):dayKey(d.t);map[k]=map[k]||{p:0,s:0};map[k].p+=d.primary;map[k].s+=d.secondary;});
+/* ── Component: area/line chart ──  areaChart(canvasId, series, days)
+   series: [{t:ms, primary:Number, secondary?:Number}]  (secondary optional → single series).
+   Reads colors from CSS vars so it follows the theme; re-call after a theme switch. */
+let _charts={};
+function areaChart(id, series, days){
+  const el=document.getElementById(id); if(!el) return; if(_charts[id]){try{_charts[id].destroy()}catch(e){}}
+  const since=Date.now()-days*864e5, byWeek=days>30, has2=series.some(d=>d.secondary!=null);
+  const map={};series.filter(d=>d.t>=since).forEach(d=>{const k=byWeek?weekKey(d.t):dayKey(d.t);map[k]=map[k]||{p:0,s:0};map[k].p+=d.primary||0;map[k].s+=d.secondary||0;});
   const labels=[],p=[],s=[];let t=byWeek?weekKey(since):dayKey(since);const end=Date.now();
   // step by re-snapping (not a fixed +ms) so a DST shift can't knock buckets off their keys
   while(t<=end){labels.push(new Date(t).toLocaleDateString("en-US",{month:"short",day:"numeric"}));p.push(map[t]?map[t].p:0);s.push(map[t]?map[t].s:0);t=byWeek?weekKey(t+7*864e5+432e5):dayKey(t+864e5+432e5);}
   const c1=cssVar("--chart-1"), c2=cssVar("--chart-2");
   const grad=(ctx,hex,a0,a1)=>{const g=ctx.createLinearGradient(0,0,0,250);g.addColorStop(0,hexToRgba(hex,a0));g.addColorStop(1,hexToRgba(hex,a1));return g;};
-  chartArea=new Chart(document.getElementById("area"),{type:"line",
-    data:{labels,datasets:[
-      {label:"Secondary",data:s,stack:"a",fill:true,tension:.4,pointRadius:0,borderWidth:1.5,borderColor:c2,backgroundColor:ctx=>grad(ctx.chart.ctx,c2,.35,.02)},
-      {label:"Primary",data:p,stack:"a",fill:true,tension:.4,pointRadius:0,borderWidth:1.5,borderColor:c1,backgroundColor:ctx=>grad(ctx.chart.ctx,c1,.5,.03)}
-    ]},
+  const ds=[{label:"Primary",data:p,stack:"a",fill:true,tension:.4,pointRadius:0,borderWidth:1.5,borderColor:c1,backgroundColor:ctx=>grad(ctx.chart.ctx,c1,.5,.03)}];
+  if(has2)ds.unshift({label:"Secondary",data:s,stack:"a",fill:true,tension:.4,pointRadius:0,borderWidth:1.5,borderColor:c2,backgroundColor:ctx=>grad(ctx.chart.ctx,c2,.35,.02)});
+  _charts[id]=new Chart(el,{type:"line",data:{labels,datasets:ds},
     options:{responsive:true,maintainAspectRatio:false,interaction:{mode:"index",intersect:false},
       plugins:{legend:{display:false},tooltip:{backgroundColor:cssVar("--card"),titleColor:cssVar("--foreground"),bodyColor:cssVar("--muted-foreground"),borderColor:cssVar("--border"),borderWidth:1,padding:10,cornerRadius:8,displayColors:true,boxWidth:8,boxHeight:8,usePointStyle:true}},
       scales:{x:{grid:{display:false},border:{display:false},ticks:{color:cssVar("--muted-foreground"),font:{size:11},maxRotation:0,autoSkip:true,maxTicksLimit:7,padding:8}},
         y:{display:false,beginAtZero:true,grid:{color:cssVar("--border"),drawTicks:false},border:{display:false}}}}});
 }
-function drawBars(breakdown){
-  if(chartBars){try{chartBars.destroy()}catch(e){}}
-  chartBars=new Chart(document.getElementById("bars"),{type:"bar",
-    data:{labels:breakdown.map(b=>b.label),datasets:[{data:breakdown.map(b=>b.value),backgroundColor:cssVar("--chart-1"),borderRadius:5,maxBarThickness:24}]},
+
+/* ── Component: horizontal bar chart ──  barChart(canvasId, [{label,value}]) */
+function barChart(id, rows){
+  const el=document.getElementById(id); if(!el) return; if(_charts[id]){try{_charts[id].destroy()}catch(e){}}
+  _charts[id]=new Chart(el,{type:"bar",
+    data:{labels:rows.map(r=>r.label),datasets:[{data:rows.map(r=>r.value),backgroundColor:cssVar("--chart-1"),borderRadius:5,maxBarThickness:24}]},
     options:{indexAxis:"y",responsive:true,maintainAspectRatio:false,
       plugins:{legend:{display:false},tooltip:{backgroundColor:cssVar("--card"),titleColor:cssVar("--foreground"),bodyColor:cssVar("--muted-foreground"),borderColor:cssVar("--border"),borderWidth:1,padding:10,cornerRadius:8,displayColors:false}},
       scales:{x:{display:false,beginAtZero:true,grid:{display:false},border:{display:false}},
         y:{grid:{display:false},border:{display:false},ticks:{color:cssVar("--muted-foreground"),font:{size:12}}}}}});
 }
 
-/* ═══════════════ theme toggle — re-reads CSS vars into the charts on switch ═══════════════ */
+/* ── Component: data table (tabs + pagination + row-select) ──
+   mountTable(containerEl, { tabs:[{id,label,headers:[...], rows:[{cells:[html,...]}]}], pageSize? }) */
+function mountTable(el, opts){
+  const tabs=opts.tabs||[]; let cur=tabs[0]?tabs[0].id:null, page=0, ps=opts.pageSize||10;
+  const cap=s=>s.charAt(0).toUpperCase()+s.slice(1);
+  el.classList.add("dt");
+  el.innerHTML=`
+    <div class="dt-top"><div class="tabslist">${tabs.map(t=>'<button data-tab="'+t.id+'"'+(t.id===cur?' class="active"':'')+'>'+esc(t.label||cap(t.id))+' <span class="b">'+t.rows.length+'</span></button>').join('')}</div></div>
+    <div class="tbl-wrap"></div>
+    <div class="dt-foot"><div class="sel"></div><div class="grp">
+      <div class="rpp">Rows per page <select class="sel-sm"><option>10</option><option>20</option><option>50</option></select></div>
+      <div class="pageinfo"></div>
+      <div class="pager"><button class="pgbtn first">${SVG.csl}</button><button class="pgbtn prev">${SVG.cl}</button><button class="pgbtn next">${SVG.cr}</button><button class="pgbtn last">${SVG.csr}</button></div>
+    </div></div>`;
+  const wrap=el.querySelector(".tbl-wrap"), selI=el.querySelector(".sel"), pageI=el.querySelector(".pageinfo");
+  const tab=()=>tabs.find(t=>t.id===cur);
+  function render(){
+    const t=tab(), rows=t.rows, total=rows.length, cols=t.headers.length+1;
+    const pages=Math.max(1,Math.ceil(total/ps)); if(page>=pages)page=pages-1; if(page<0)page=0;
+    const slice=rows.slice(page*ps,page*ps+ps);
+    const head='<tr><th class="mid"><input type="checkbox" class="all"></th>'+t.headers.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr>';
+    const body=slice.map(r=>'<tr><td class="mid"><input type="checkbox" class="rc"></td>'+r.cells.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('');
+    wrap.innerHTML='<table><thead>'+head+'</thead><tbody>'+(body||'<tr><td colspan="'+cols+'" style="text-align:center;padding:36px" class="mut">No results.</td></tr>')+'</tbody></table>';
+    pageI.textContent="Page "+(page+1)+" of "+pages;
+    const upd=()=>{selI.textContent=wrap.querySelectorAll(".rc:checked").length+" of "+total+" row(s) selected.";};
+    upd();
+    const all=wrap.querySelector(".all"); if(all)all.addEventListener("change",()=>{wrap.querySelectorAll(".rc").forEach(c=>c.checked=all.checked);upd();});
+    wrap.querySelectorAll(".rc").forEach(c=>c.addEventListener("change",upd));
+    el.querySelector(".first").disabled=page===0; el.querySelector(".prev").disabled=page===0;
+    el.querySelector(".next").disabled=page>=pages-1; el.querySelector(".last").disabled=page>=pages-1;
+  }
+  el.querySelectorAll(".tabslist button").forEach(b=>b.addEventListener("click",()=>{cur=b.dataset.tab;page=0;el.querySelectorAll(".tabslist button").forEach(x=>x.classList.toggle("active",x.dataset.tab===cur));render();}));
+  el.querySelector(".rpp select").addEventListener("change",e=>{ps=+e.target.value;page=0;render();});
+  el.querySelector(".first").addEventListener("click",()=>{page=0;render();});
+  el.querySelector(".prev").addEventListener("click",()=>{page--;render();});
+  el.querySelector(".next").addEventListener("click",()=>{page++;render();});
+  el.querySelector(".last").addEventListener("click",()=>{page=1e9;render();});
+  render();
+}
+
+/* theme toggle (foundation control — keep it). load() sets window.__redraw so charts re-theme. */
 function syncThemeIcon(){document.getElementById("themeToggle").innerHTML=document.documentElement.classList.contains("dark")?SVG.sun:SVG.moon;}
 document.getElementById("themeToggle").addEventListener("click",()=>{
   const dark=document.documentElement.classList.toggle("dark");
   try{localStorage.setItem("dashkit_theme",dark?"dark":"light");}catch(e){}
   syncThemeIcon();
-  // charts hold resolved colors, so redraw them from the new vars
-  if(STATE&&STATE.records){drawArea(SAMPLE.series,curRange);drawBars(SAMPLE.breakdown);}
+  if(typeof window.__redraw==="function")window.__redraw(); // charts bake in colors → redraw on switch
 });
 syncThemeIcon();
+
+/* ╔══════════════════════════════════════════════════════════════════════════════╗
+   ║ COMPOSITION — THIS is the part you write for YOUR data. The example below       ║
+   ║ composes stat cards + two charts + a tabbed table. Add/remove/rearrange freely. ║
+   ╚══════════════════════════════════════════════════════════════════════════════╝ */
+
+/* WIRE YOUR SOURCES: replace with real MCP tool names + IDs (artifact reaches REMOTE only). */
+const SOURCE_A = "mcp__SERVER_UUID__list_items";   // ← e.g. mcp__<uuid>__list_deployments
+const PROJECT_ID = "REPLACE_ME";                   // ← or delete if the tool needs no IDs
+
+/* PREVIEW-ONLY SAMPLE — delete once wired to call(). */
+const SAMPLE = {
+  stats:{ revenue:48250, users:1284, records:342, success:98 },
+  series:(function(){const a=[],now=Date.now();for(let i=89;i>=0;i--){a.push({t:now-i*864e5,primary:Math.round(6+8*Math.random()+(i<30?6:0)),secondary:Math.round(2+4*Math.random())});}return a;})(),
+  breakdown:[{label:"Organic",value:540},{label:"Referral",value:312},{label:"Direct",value:268},{label:"Email",value:164}],
+  records:[{name:"Initial import",status:"READY",owner:"Ada",when:Date.now()-2*864e5},{name:"Schema migration",status:"READY",owner:"Lin",when:Date.now()-5*864e5},{name:"Backfill job",status:"RUNNING",owner:"Sam",when:Date.now()-6*864e5},{name:"Failed export",status:"ERROR",owner:"Ada",when:Date.now()-9*864e5}],
+  items:[{label:"Workspaces",count:128},{label:"Members",count:1284},{label:"Projects",count:342},{label:"Integrations",count:17}]
+};
+
+async function load(){
+  Object.keys(_charts).forEach(k=>{try{_charts[k].destroy()}catch(e){}}); _charts={};
+  const app=document.getElementById("app");
+  try{
+    /* 1) DATA — replace SAMPLE with live calls, e.g.:
+         const deps = await call(SOURCE_A, {projectId:PROJECT_ID});
+       Use Promise.all for independent calls; wrap each OPTIONAL source in its own try/catch. */
+    const live = !!(window.cowork && window.cowork.callMcpTool);
+    const d = SAMPLE;
+    document.getElementById("hdrStatus").outerHTML = badge("outline", live?SVG.check:"", live?"Live":"Sample data");
+
+    /* 2) COMPOSE — render the components your data calls for, in any arrangement. */
+    app.innerHTML = `
+      <div class="section-cards">
+        ${scard({desc:"Revenue", value:money(d.stats.revenue), badge:badge("outline",SVG.up,"+12%"), foot:"Up from last period", footIcon:SVG.up, sub:"Sum of paid orders"})}
+        ${scard({desc:"Active Users", value:num(d.stats.users), badge:badge("outline",SVG.up,"+4%"), foot:"Steady growth", footIcon:SVG.up, sub:"Distinct users this period"})}
+        ${scard({desc:"Records", value:num(d.stats.records), badge:badge("outline","","Live"), foot:"Total tracked", sub:"Across all tables"})}
+        ${scard({desc:"Success Rate", value:d.stats.success+"%", badge:badge("outline",SVG.up,"Healthy"), foot:"All systems green", footIcon:SVG.up, sub:"Recent jobs succeeded"})}
+      </div>
+      <div class="block"><div class="chart-grid">
+        <div class="card chart-card">
+          <div class="chart-head"><div><div class="ct">Activity</div><div class="cs">Two series over the selected period</div></div>
+            <div class="tgroup" id="rangeToggle"><button data-r="90" class="active">3 months</button><button data-r="30">30 days</button><button data-r="7">7 days</button></div></div>
+          <div class="chart-content"><div class="chart-box"><canvas id="area"></canvas></div></div>
+        </div>
+        <div class="card chart-card">
+          <div class="chart-head"><div><div class="ct">Breakdown</div><div class="cs">By category</div></div></div>
+          <div class="chart-content"><div class="chart-box"><canvas id="bars"></canvas></div></div>
+        </div>
+      </div></div>
+      <div class="block"><div id="tbl"></div></div>
+      <div class="footnote">Sources: name the real connectors here. Replace SAMPLE before shipping.</div>`;
+
+    /* 3) DRAW + MOUNT the components */
+    let range=90;
+    const drawCharts=()=>{ areaChart("area", d.series, range); barChart("bars", d.breakdown); };
+    drawCharts(); window.__redraw=drawCharts;          // lets the theme toggle re-theme the charts
+    document.querySelectorAll("#rangeToggle button").forEach(b=>b.addEventListener("click",()=>{
+      document.querySelectorAll("#rangeToggle button").forEach(x=>x.classList.remove("active"));b.classList.add("active");
+      range=+b.dataset.r; areaChart("area", d.series, range);}));
+
+    mountTable(document.getElementById("tbl"), {tabs:[
+      {id:"records", label:"Records", headers:["Name","Status","Owner","Updated"],
+       rows:d.records.map(r=>({cells:['<span>'+esc(r.name)+'</span>', statusBadge(r.status,{READY:"Ready",ERROR:"Failed",RUNNING:"Running"}), esc(r.owner), '<span class="mut">'+fmtDate(r.when)+'</span>']}))},
+      {id:"items", label:"Items", headers:["Item","Count"],
+       rows:d.items.slice().sort((a,b)=>b.count-a.count).map(it=>({cells:['<span>'+esc(it.label)+'</span>','<span style="font-variant-numeric:tabular-nums">'+num(it.count)+'</span>']}))}
+    ]});
+
+    /* sidebar nav (scroll-to). Add data-go="<id>" to a menu item and id to a section to wire more. */
+    document.querySelectorAll(".smenu-btn[data-go]").forEach(el2=>el2.addEventListener("click",()=>{
+      document.querySelectorAll(".smenu-btn").forEach(x=>x.classList.remove("active"));el2.classList.add("active");
+      const t=document.getElementById(el2.dataset.go);if(t)t.scrollIntoView({behavior:"smooth",block:"start"});}));
+    document.getElementById("sbToggle").addEventListener("click",()=>{const s=document.querySelector(".sidebar");s.style.display=s.style.display==="none"?"":"none";});
+
+  }catch(e){ app.innerHTML='<div class="errbox">Couldn\'t load live data: '+esc(e.message||String(e))+'. Try Reload.</div>'; }
+}
 load();
 </script>
 </body>
 </html>
 ```
 
+## Data shapes (handy reference)
+
+Common remote-connector return shapes, after the `call()` normalizer (use whatever connectors
+*this* user actually has — Linear, GitHub, Notion, Postgres, … — these are just frequent ones):
+
+| Source | Tool / op | Args | Returns |
+|---|---|---|---|
+| Vercel | `list_deployments` | `{projectId, teamId}` | `{deployments:{deployments:[…]}}` or `{deployments:[…]}`; each `{created(ms), state:"READY"|"ERROR"|…, url, meta:{githubCommitMessage, githubCommitRef, githubCommitAuthorName}}` |
+| Supabase | `list_tables` | `{project_id, schemas:["public"], verbose:false}` | `{tables:[{name:"public.x", rows, rls_enabled}]}` |
+| Stripe | `stripe_api_read` | `{stripe_api_operation_id:"GetBalance"|"GetCharges"|"GetPrices"|"GetProducts", parameters:{…}}` | balance `{available:[{amount}],pending:[{amount}]}`; others `{data:[…]}` (amounts in **cents** — divide by 100) |
+
+## Pre-ship checklist
+- [ ] Data source is a **remote** MCP connector (not local/stdio).
+- [ ] Tool-name consts came from the agent's own connected tools; IDs confirmed via a probe.
+- [ ] Layout composed from the data that actually exists and run past the user — not a default shape.
+- [ ] Only the components the data warrants are present; no empty/filler cards, charts, or tabs.
+- [ ] Single file; only external deps are the Chart.js + Geist CDN tags.
+- [ ] All colors from CSS tokens; light on `:root`, dark under `.dark`, each with `color-scheme`.
+- [ ] A **visible light/dark toggle in the header** works; **charts re-read colors on switch**.
+- [ ] Charts, tooltips, gridlines, axis ticks legible in **both** light and dark.
+- [ ] Every interactive-looking element does something real, or is gone (kept the live ones).
+- [ ] External links correct, new tab, `rel="noopener"`.
+- [ ] Live values HTML-escaped; amounts converted from cents.
+- [ ] Optional integrations fail gracefully (no whole-page blank on one dead source).
+- [ ] All `SAMPLE`/placeholder data and `SOURCE_*`/`REPLACE_ME` consts removed; real values in.
+- [ ] Real IDs/email reviewed before any sharing.
+
 ## Reference files in this folder (optional — SKILL.md alone is sufficient)
-- **`dashboard-template.html`** — the Build kit above as a standalone file you can open and edit
-  directly. Identical content.
-- **`DASHBOARD-PLAYBOOK.md`** — extended reference: per-source data-shape tables, the
-  remote-vs-local deep dive, the `cssVar`/`hexToRgba` rationale, and the mock-preview method.
+- **`dashboard-template.html`** — the Build kit above as a standalone file (the same Foundation
+  shown composed into one example). Open it to see the kit running; identical content.
