@@ -1,0 +1,5 @@
+# gstack/browse daemon session state (tokens, PIDs, logs) — never commit
+.gstack/
+
+# throwaway mock-preview files (see DASHBOARD-PLAYBOOK.md §6)
+__preview*.html
